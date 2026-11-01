@@ -5,6 +5,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PveClient } from "../core/client.js";
+import { applyDevices, devicesSchema } from "../core/qemu-config.js";
 import { getRrdData, rrdDescription, rrdInputSchema } from "../core/rrd.js";
 import { registerTool } from "../core/tools.js";
 import type { AppConfig } from "../types/index.js";
@@ -272,6 +273,11 @@ export function registerQemuTools(
         .optional()
         .describe("Boot order (e.g. order=scsi0;ide2;net0)"),
       start: z.boolean().optional().describe("Start VM after creation"),
+      agent: z
+        .string()
+        .optional()
+        .describe("Guest agent (e.g. 1 or enabled=1,fstrim_cloned_disks=1)"),
+      devices: devicesSchema,
     },
     handler: async (args) => {
       const body: Record<string, unknown> = { vmid: args.vmid };
@@ -286,6 +292,8 @@ export function registerQemuTools(
       if (args.scsihw !== undefined) body.scsihw = args.scsihw;
       if (args.boot !== undefined) body.boot = args.boot;
       if (args.start !== undefined) body.start = args.start ? 1 : 0;
+      if (args.agent !== undefined) body.agent = args.agent;
+      applyDevices(body, args.devices);
       const data = await client.post(`/nodes/${args.node}/qemu`, body);
       return `VM ${args.vmid} creation initiated on node ${args.node}. Task: ${data}`;
     },
@@ -357,6 +365,11 @@ export function registerQemuTools(
       onboot: z.boolean().optional().describe("Start on boot"),
       net0: z.string().optional().describe("Network device config"),
       scsi0: z.string().optional().describe("SCSI disk config"),
+      agent: z
+        .string()
+        .optional()
+        .describe("Guest agent (e.g. 1 or enabled=1,fstrim_cloned_disks=1)"),
+      devices: devicesSchema,
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {};
@@ -369,6 +382,8 @@ export function registerQemuTools(
       if (args.onboot !== undefined) body.onboot = args.onboot ? 1 : 0;
       if (args.net0 !== undefined) body.net0 = args.net0;
       if (args.scsi0 !== undefined) body.scsi0 = args.scsi0;
+      if (args.agent !== undefined) body.agent = args.agent;
+      applyDevices(body, args.devices);
       await client.put(`/nodes/${args.node}/qemu/${args.vmid}/config`, body);
       return `VM ${args.vmid} configuration updated on node ${args.node}.`;
     },

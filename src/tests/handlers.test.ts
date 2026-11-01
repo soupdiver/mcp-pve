@@ -914,3 +914,99 @@ describe("handler: rrddata tools", () => {
     });
   }
 });
+
+describe("handler: QEMU agent and devices", () => {
+  let cleanup: () => Promise<void>;
+  let mcpClient: Client;
+  let mockClient: PveClient;
+
+  beforeEach(async () => {
+    mockClient = makeMockClient();
+    const server = createServer();
+    registerAllTools(server, mockClient, makeConfig());
+    const conn = await connectTestClient(server);
+    mcpClient = conn.client;
+    cleanup = conn.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("pve_create_qemu_vm passes agent and devices", async () => {
+    vi.mocked(mockClient.post).mockResolvedValueOnce("UPID:pve:0003");
+
+    const result = await mcpClient.callTool({
+      name: "pve_create_qemu_vm",
+      arguments: {
+        node: "pve",
+        vmid: 300,
+        agent: "enabled=1,fstrim_cloned_disks=1",
+        devices: {
+          scsi1: "local-lvm:50,discard=on",
+          net1: "virtio,bridge=vmbr1",
+          ipconfig0: "ip=dhcp",
+        },
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(mockClient.post).toHaveBeenCalledWith("/nodes/pve/qemu", {
+      vmid: 300,
+      agent: "enabled=1,fstrim_cloned_disks=1",
+      scsi1: "local-lvm:50,discard=on",
+      net1: "virtio,bridge=vmbr1",
+      ipconfig0: "ip=dhcp",
+    });
+  });
+
+  it("pve_update_qemu_config passes agent and devices", async () => {
+    const result = await mcpClient.callTool({
+      name: "pve_update_qemu_config",
+      arguments: {
+        node: "pve",
+        vmid: 100,
+        agent: "1",
+        devices: { virtio0: "local-lvm:vm-100-disk-1,iothread=1" },
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(mockClient.put).toHaveBeenCalledWith("/nodes/pve/qemu/100/config", {
+      agent: "1",
+      virtio0: "local-lvm:vm-100-disk-1,iothread=1",
+    });
+  });
+
+  it("rejects keys outside the allowed ranges", async () => {
+    for (const key of [
+      "hostpci0",
+      "scsi31",
+      "ide4",
+      "net32",
+      "scsi01",
+      "args",
+    ]) {
+      const result = await mcpClient.callTool({
+        name: "pve_update_qemu_config",
+        arguments: { node: "pve", vmid: 100, devices: { [key]: "x" } },
+      });
+      expect(result.isError).toBe(true);
+    }
+    expect(mockClient.put).not.toHaveBeenCalled();
+  });
+
+  it("rejects a key set both as a parameter and in devices", async () => {
+    const result = await mcpClient.callTool({
+      name: "pve_update_qemu_config",
+      arguments: {
+        node: "pve",
+        vmid: 100,
+        scsi0: "local-lvm:vm-100-disk-0",
+        devices: { scsi0: "local-lvm:vm-100-disk-1" },
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(mockClient.put).not.toHaveBeenCalled();
+  });
+});
