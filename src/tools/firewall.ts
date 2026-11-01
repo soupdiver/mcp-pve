@@ -6,7 +6,41 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PveClient } from "../core/client.js";
 import { registerTool } from "../core/tools.js";
+import { digestSchema, optionListSchema } from "../core/validators.js";
 import type { AppConfig } from "../types/index.js";
+
+/** Rule fields for create and update. */
+const ruleExtraShape = {
+  macro: z.string().optional().describe("Macro (e.g. SSH, HTTP, Ping)"),
+  iface: z.string().optional().describe("Network interface"),
+  log: z
+    .enum([
+      "emerg",
+      "alert",
+      "crit",
+      "err",
+      "warning",
+      "notice",
+      "info",
+      "debug",
+      "nolog",
+    ])
+    .optional()
+    .describe("Log level"),
+  "icmp-type": z.string().optional().describe("ICMP type (e.g. echo-request)"),
+  digest: digestSchema(
+    "Rule list digest, the change fails if the rules changed since",
+  ),
+};
+
+function applyRuleExtras(
+  body: Record<string, unknown>,
+  args: Record<string, unknown>,
+): void {
+  for (const key of Object.keys(ruleExtraShape)) {
+    if (args[key] !== undefined) body[key] = args[key];
+  }
+}
 
 export function registerFirewallTools(
   server: McpServer,
@@ -156,6 +190,7 @@ export function registerFirewallTools(
         .number()
         .optional()
         .describe("Position in the rule list (0-based)"),
+      ...ruleExtraShape,
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {
@@ -170,6 +205,7 @@ export function registerFirewallTools(
       if (args.sport !== undefined) body.sport = args.sport;
       if (args.comment !== undefined) body.comment = args.comment;
       if (args.pos !== undefined) body.pos = args.pos;
+      applyRuleExtras(body, args);
       await client.post("/cluster/firewall/rules", body);
       return "Cluster firewall rule created successfully.";
     },
@@ -199,6 +235,9 @@ export function registerFirewallTools(
       dport: z.string().optional().describe("Destination port or port range"),
       sport: z.string().optional().describe("Source port or port range"),
       comment: z.string().optional().describe("Rule comment"),
+      ...ruleExtraShape,
+      delete: optionListSchema("Settings to remove", "dport,log"),
+      moveto: z.number().optional().describe("Move the rule to this position"),
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {};
@@ -210,6 +249,9 @@ export function registerFirewallTools(
       if (args.dport !== undefined) body.dport = args.dport;
       if (args.sport !== undefined) body.sport = args.sport;
       if (args.comment !== undefined) body.comment = args.comment;
+      applyRuleExtras(body, args);
+      if (args.delete !== undefined) body.delete = args.delete;
+      if (args.moveto !== undefined) body.moveto = args.moveto;
       await client.put(`/cluster/firewall/rules/${args.pos}`, body);
       return `Cluster firewall rule at position ${args.pos} updated successfully.`;
     },

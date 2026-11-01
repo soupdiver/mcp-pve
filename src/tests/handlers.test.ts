@@ -1759,3 +1759,89 @@ describe("handler: network and storage options", () => {
     }
   });
 });
+
+describe("handler: firewall rule and HA resource options", () => {
+  let cleanup: () => Promise<void>;
+  let mcpClient: Client;
+  let mockClient: PveClient;
+
+  beforeEach(async () => {
+    mockClient = makeMockClient();
+    const server = createServer();
+    registerAllTools(server, mockClient, makeConfig());
+    const conn = await connectTestClient(server);
+    mcpClient = conn.client;
+    cleanup = conn.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("pve_create_firewall_rule passes macro, iface, log and icmp-type", async () => {
+    await mcpClient.callTool({
+      name: "pve_create_firewall_rule",
+      arguments: {
+        action: "ACCEPT",
+        type: "in",
+        macro: "SSH",
+        iface: "vmbr0",
+        log: "info",
+        "icmp-type": "echo-request",
+        digest: "ABCDEF",
+      },
+    });
+    expect(mockClient.post).toHaveBeenCalledWith("/cluster/firewall/rules", {
+      action: "ACCEPT",
+      type: "in",
+      macro: "SSH",
+      iface: "vmbr0",
+      log: "info",
+      "icmp-type": "echo-request",
+      digest: "ABCDEF",
+    });
+  });
+
+  it("pve_update_firewall_rule passes delete and moveto, rejects bad input", async () => {
+    await mcpClient.callTool({
+      name: "pve_update_firewall_rule",
+      arguments: { pos: 2, log: "nolog", delete: "dport,comment", moveto: 0 },
+    });
+    expect(mockClient.put).toHaveBeenCalledWith("/cluster/firewall/rules/2", {
+      log: "nolog",
+      delete: "dport,comment",
+      moveto: 0,
+    });
+    for (const extra of [
+      { log: "verbose" },
+      { delete: "a b" },
+      { digest: "zz" },
+    ]) {
+      const bad = await mcpClient.callTool({
+        name: "pve_update_firewall_rule",
+        arguments: { pos: 2, ...extra },
+      });
+      expect(bad.isError).toBe(true);
+    }
+  });
+
+  it("HA resource tools pass failback, auto-rebalance and delete", async () => {
+    await mcpClient.callTool({
+      name: "pve_create_ha_resource",
+      arguments: { sid: "vm:100", failback: false, "auto-rebalance": true },
+    });
+    expect(mockClient.post).toHaveBeenCalledWith("/cluster/ha/resources", {
+      sid: "vm:100",
+      failback: 0,
+      "auto-rebalance": 1,
+    });
+    await mcpClient.callTool({
+      name: "pve_update_ha_resource",
+      arguments: { sid: "vm:100", failback: true, delete: "group,comment" },
+    });
+    expect(mockClient.put).toHaveBeenCalledWith(
+      "/cluster/ha/resources/vm%3A100",
+      { failback: 1, delete: "group,comment" },
+    );
+  });
+});

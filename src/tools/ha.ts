@@ -8,6 +8,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PveClient } from "../core/client.js";
 import { registerTool } from "../core/tools.js";
+import { optionListSchema } from "../core/validators.js";
 import type { AppConfig } from "../types/index.js";
 
 export function registerHaTools(
@@ -146,6 +147,14 @@ export function registerHaTools(
         .optional()
         .describe("Requested HA state (default: started)"),
       comment: z.string().optional().describe("Resource comment"),
+      failback: z
+        .boolean()
+        .optional()
+        .describe("Move back to the preferred node when it is up again"),
+      "auto-rebalance": z
+        .boolean()
+        .optional()
+        .describe("Allow moves during automatic rebalancing"),
     },
     handler: async (args) => {
       const body: Record<string, unknown> = { sid: args.sid };
@@ -155,6 +164,9 @@ export function registerHaTools(
       if (args.max_restart !== undefined) body.max_restart = args.max_restart;
       if (args.state !== undefined) body.state = args.state;
       if (args.comment !== undefined) body.comment = args.comment;
+      if (args.failback !== undefined) body.failback = args.failback ? 1 : 0;
+      if (args["auto-rebalance"] !== undefined)
+        body["auto-rebalance"] = args["auto-rebalance"] ? 1 : 0;
       await client.post("/cluster/ha/resources", body);
       return `HA resource '${args.sid}' created successfully.`;
     },
@@ -187,6 +199,15 @@ export function registerHaTools(
         .optional()
         .describe("Requested HA state"),
       comment: z.string().optional().describe("Resource comment"),
+      failback: z
+        .boolean()
+        .optional()
+        .describe("Move back to the preferred node when it is up again"),
+      "auto-rebalance": z
+        .boolean()
+        .optional()
+        .describe("Allow moves during automatic rebalancing"),
+      delete: optionListSchema("Settings to remove", "group,comment"),
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {};
@@ -196,6 +217,10 @@ export function registerHaTools(
       if (args.max_restart !== undefined) body.max_restart = args.max_restart;
       if (args.state !== undefined) body.state = args.state;
       if (args.comment !== undefined) body.comment = args.comment;
+      if (args.failback !== undefined) body.failback = args.failback ? 1 : 0;
+      if (args["auto-rebalance"] !== undefined)
+        body["auto-rebalance"] = args["auto-rebalance"] ? 1 : 0;
+      if (args.delete !== undefined) body.delete = args.delete;
       await client.put(
         `/cluster/ha/resources/${encodeURIComponent(String(args.sid))}`,
         body,
