@@ -1158,3 +1158,127 @@ describe("handler: QEMU VM options", () => {
     }
   });
 });
+
+describe("handler: LXC options and devices", () => {
+  let cleanup: () => Promise<void>;
+  let mcpClient: Client;
+  let mockClient: PveClient;
+
+  beforeEach(async () => {
+    mockClient = makeMockClient();
+    const server = createServer();
+    registerAllTools(server, mockClient, makeConfig());
+    const conn = await connectTestClient(server);
+    mcpClient = conn.client;
+    cleanup = conn.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("pve_create_lxc_container passes the new options and devices", async () => {
+    vi.mocked(mockClient.post).mockResolvedValueOnce("UPID:pve:0005");
+
+    const result = await mcpClient.callTool({
+      name: "pve_create_lxc_container",
+      arguments: {
+        node: "pve",
+        vmid: 210,
+        ostemplate: "local:vztmpl/debian-12.tar.zst",
+        description: "web",
+        pool: "prod",
+        arch: "amd64",
+        ostype: "debian",
+        nameserver: "10.0.0.1",
+        searchdomain: "lan",
+        timezone: "Europe/Berlin",
+        cpulimit: 2,
+        cpuunits: 512,
+        protection: true,
+        console: true,
+        tty: 2,
+        cmode: "tty",
+        devices: {
+          mp0: "local-lvm:8,mp=/data,backup=1",
+          net1: "name=eth1,bridge=vmbr1,ip=dhcp",
+        },
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(mockClient.post).toHaveBeenCalledWith("/nodes/pve/lxc", {
+      vmid: 210,
+      ostemplate: "local:vztmpl/debian-12.tar.zst",
+      description: "web",
+      pool: "prod",
+      arch: "amd64",
+      ostype: "debian",
+      nameserver: "10.0.0.1",
+      searchdomain: "lan",
+      timezone: "Europe/Berlin",
+      cpulimit: 2,
+      cpuunits: 512,
+      tty: 2,
+      cmode: "tty",
+      protection: 1,
+      console: 1,
+      mp0: "local-lvm:8,mp=/data,backup=1",
+      net1: "name=eth1,bridge=vmbr1,ip=dhcp",
+    });
+  });
+
+  it("pve_update_lxc_config passes rootfs, delete, revert and digest", async () => {
+    const result = await mcpClient.callTool({
+      name: "pve_update_lxc_config",
+      arguments: {
+        node: "pve",
+        vmid: 210,
+        rootfs: "local-lvm:vm-210-disk-0,size=16G",
+        protection: false,
+        delete: "mp1,tags",
+        revert: "memory",
+        digest: "abc123",
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(mockClient.put).toHaveBeenCalledWith("/nodes/pve/lxc/210/config", {
+      rootfs: "local-lvm:vm-210-disk-0,size=16G",
+      protection: 0,
+      delete: "mp1,tags",
+      revert: "memory",
+      digest: "abc123",
+    });
+  });
+
+  it("rejects unknown keys and bad values", async () => {
+    const bad = [
+      { devices: { mp256: "local-lvm:1,mp=/x" } },
+      { devices: { dev0: "/dev/sda" } },
+      { devices: { unused0: "local-lvm:vm-1-disk-0" } },
+      { delete: "lock" },
+      { ostype: "windows" },
+    ];
+    for (const extra of bad) {
+      const result = await mcpClient.callTool({
+        name: "pve_update_lxc_config",
+        arguments: { node: "pve", vmid: 210, ...extra },
+      });
+      expect(result.isError).toBe(true);
+    }
+    expect(mockClient.put).not.toHaveBeenCalled();
+  });
+
+  it("has no hookscript, lock, dev or template in the schema", async () => {
+    const { tools } = await mcpClient.listTools();
+    for (const name of ["pve_create_lxc_container", "pve_update_lxc_config"]) {
+      const props = Object.keys(
+        tools.find((t) => t.name === name)?.inputSchema.properties ?? {},
+      );
+      for (const key of ["hookscript", "lock", "dev0", "template", "debug"]) {
+        expect(props).not.toContain(key);
+      }
+    }
+  });
+});

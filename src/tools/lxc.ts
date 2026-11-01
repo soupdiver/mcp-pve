@@ -5,8 +5,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PveClient } from "../core/client.js";
+import { applyLxcOptions, lxcOptionsShape } from "../core/lxc-config.js";
 import { getRrdData, rrdDescription, rrdInputSchema } from "../core/rrd.js";
 import { registerTool } from "../core/tools.js";
+import { digestSchema, optionListSchema } from "../core/validators.js";
 import type { AppConfig } from "../types/index.js";
 
 export function registerLxcTools(
@@ -268,6 +270,13 @@ export function registerLxcTools(
         .describe(
           "Startup/shutdown order config, e.g. 'order=3,up=30,down=60'",
         ),
+      description: z.string().optional().describe("Container description"),
+      pool: z.string().optional().describe("Resource pool"),
+      arch: z
+        .enum(["amd64", "i386", "arm64", "armhf", "riscv32", "riscv64"])
+        .optional()
+        .describe("Architecture"),
+      ...lxcOptionsShape,
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {
@@ -294,6 +303,10 @@ export function registerLxcTools(
       if (args.onboot !== undefined) body.onboot = args.onboot ? 1 : 0;
       if (args.tags !== undefined) body.tags = args.tags;
       if (args.startup !== undefined) body.startup = args.startup;
+      if (args.description !== undefined) body.description = args.description;
+      if (args.pool !== undefined) body.pool = args.pool;
+      if (args.arch !== undefined) body.arch = args.arch;
+      applyLxcOptions(body, args);
       const data = await client.post(`/nodes/${args.node}/lxc`, body);
       return `Container ${args.vmid} creation initiated on node ${args.node}. Task: ${data}`;
     },
@@ -379,6 +392,16 @@ export function registerLxcTools(
         .describe(
           "Startup/shutdown order config, e.g. 'order=3,up=30,down=60'",
         ),
+      rootfs: z
+        .string()
+        .optional()
+        .describe("Root filesystem (e.g. local-lvm:vm-200-disk-0,size=16G)"),
+      ...lxcOptionsShape,
+      delete: optionListSchema("Options to remove", "mp1,nameserver"),
+      revert: optionListSchema("Pending options to revert", "memory,cores"),
+      digest: digestSchema(
+        "Config digest, the update fails if the config changed since",
+      ),
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {};
@@ -392,6 +415,16 @@ export function registerLxcTools(
       if (args.features !== undefined) body.features = args.features;
       if (args.tags !== undefined) body.tags = args.tags;
       if (args.startup !== undefined) body.startup = args.startup;
+      if (args.rootfs !== undefined) body.rootfs = args.rootfs;
+      applyLxcOptions(body, args);
+      if (args.delete !== undefined) {
+        if (String(args.delete).split(",").includes("lock")) {
+          throw new Error("Deleting lock is not allowed");
+        }
+        body.delete = args.delete;
+      }
+      if (args.revert !== undefined) body.revert = args.revert;
+      if (args.digest !== undefined) body.digest = args.digest;
       await client.put(`/nodes/${args.node}/lxc/${args.vmid}/config`, body);
       return `Container ${args.vmid} configuration updated on node ${args.node}.`;
     },
