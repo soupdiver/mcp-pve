@@ -1496,3 +1496,92 @@ describe("handler: backup options", () => {
     }
   });
 });
+
+describe("handler: task filters, VM list and pool move", () => {
+  let cleanup: () => Promise<void>;
+  let mcpClient: Client;
+  let mockClient: PveClient;
+
+  beforeEach(async () => {
+    mockClient = makeMockClient();
+    const server = createServer();
+    registerAllTools(server, mockClient, makeConfig());
+    const conn = await connectTestClient(server);
+    mcpClient = conn.client;
+    cleanup = conn.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("pve_list_tasks builds the filter query", async () => {
+    await mcpClient.callTool({
+      name: "pve_list_tasks",
+      arguments: {
+        node: "pve",
+        source: "all",
+        errors: true,
+        since: 1700000000,
+        until: 1700086400,
+        statusfilter: "error,warning",
+        userfilter: "root@pam",
+        vmid: 100,
+        limit: 10,
+      },
+    });
+    const path = vi.mocked(mockClient.get).mock.calls.at(-1)?.[0] as string;
+    const url = new URL(path, "http://x");
+    expect(url.pathname).toBe("/nodes/pve/tasks");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      limit: "10",
+      vmid: "100",
+      source: "all",
+      errors: "1",
+      since: "1700000000",
+      until: "1700086400",
+      statusfilter: "error,warning",
+      userfilter: "root@pam",
+    });
+  });
+
+  it("pve_list_tasks without filters uses the plain path", async () => {
+    await mcpClient.callTool({
+      name: "pve_list_tasks",
+      arguments: { node: "pve" },
+    });
+    expect(mockClient.get).toHaveBeenLastCalledWith("/nodes/pve/tasks");
+  });
+
+  it("pve_list_tasks rejects an unknown source", async () => {
+    const result = await mcpClient.callTool({
+      name: "pve_list_tasks",
+      arguments: { node: "pve", source: "everything" },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  it("pve_list_qemu_vms passes full only when set", async () => {
+    await mcpClient.callTool({
+      name: "pve_list_qemu_vms",
+      arguments: { node: "pve" },
+    });
+    expect(mockClient.get).toHaveBeenLastCalledWith("/nodes/pve/qemu");
+    await mcpClient.callTool({
+      name: "pve_list_qemu_vms",
+      arguments: { node: "pve", full: true },
+    });
+    expect(mockClient.get).toHaveBeenLastCalledWith("/nodes/pve/qemu?full=1");
+  });
+
+  it("pve_update_pool passes allow-move", async () => {
+    await mcpClient.callTool({
+      name: "pve_update_pool",
+      arguments: { poolid: "prod", vms: "100", "allow-move": true },
+    });
+    expect(mockClient.put).toHaveBeenLastCalledWith("/pools/prod", {
+      vms: "100",
+      "allow-move": 1,
+    });
+  });
+});

@@ -37,9 +37,11 @@ export function registerQemuTools(
     },
     inputSchema: {
       node: z.string().describe("The node name"),
+      full: z.boolean().optional().describe("Full status of running VMs"),
     },
     handler: async (args) => {
-      const data = await client.get(`/nodes/${args.node}/qemu`);
+      const full = args.full ? "?full=1" : "";
+      const data = await client.get(`/nodes/${args.node}/qemu${full}`);
       return JSON.stringify(data, null, 2);
     },
   });

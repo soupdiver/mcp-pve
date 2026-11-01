@@ -107,6 +107,10 @@ export function registerPoolTools(
         .boolean()
         .optional()
         .describe("Remove specified VMs/storage from pool instead of adding"),
+      "allow-move": z
+        .boolean()
+        .optional()
+        .describe("Move guests that are in another pool"),
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {};
@@ -114,6 +118,8 @@ export function registerPoolTools(
       if (args.vms !== undefined) body.vms = args.vms;
       if (args.storage !== undefined) body.storage = args.storage;
       if (args.delete !== undefined) body.delete = args.delete ? 1 : 0;
+      if (args["allow-move"] !== undefined)
+        body["allow-move"] = args["allow-move"] ? 1 : 0;
       await client.put(
         `/pools/${encodeURIComponent(String(args.poolid))}`,
         body,

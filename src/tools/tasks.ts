@@ -39,6 +39,18 @@ export function registerTaskTools(
         .string()
         .optional()
         .describe("Filter by task type (e.g. qmstart, vzdump)"),
+      source: z
+        .enum(["archive", "active", "all"])
+        .optional()
+        .describe("Which tasks to list (default: archive)"),
+      errors: z.boolean().optional().describe("Only tasks that failed"),
+      since: z.number().optional().describe("Only tasks since this UNIX time"),
+      until: z.number().optional().describe("Only tasks until this UNIX time"),
+      statusfilter: z
+        .string()
+        .optional()
+        .describe("Task states, comma-separated (e.g. error,warning)"),
+      userfilter: z.string().optional().describe("Only tasks of this user"),
     },
     handler: async (args) => {
       const params = new URLSearchParams();
@@ -47,6 +59,15 @@ export function registerTaskTools(
       if (args.vmid !== undefined) params.set("vmid", String(args.vmid));
       if (args.typefilter !== undefined)
         params.set("typefilter", String(args.typefilter));
+      if (args.source !== undefined) params.set("source", String(args.source));
+      if (args.errors !== undefined)
+        params.set("errors", args.errors ? "1" : "0");
+      if (args.since !== undefined) params.set("since", String(args.since));
+      if (args.until !== undefined) params.set("until", String(args.until));
+      if (args.statusfilter !== undefined)
+        params.set("statusfilter", String(args.statusfilter));
+      if (args.userfilter !== undefined)
+        params.set("userfilter", String(args.userfilter));
       const qs = params.toString();
       const path = `/nodes/${args.node}/tasks${qs ? `?${qs}` : ""}`;
       const data = await client.get(path);
