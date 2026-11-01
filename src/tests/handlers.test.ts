@@ -1387,3 +1387,112 @@ describe("handler: clone and snapshot options", () => {
     );
   });
 });
+
+describe("handler: backup options", () => {
+  let cleanup: () => Promise<void>;
+  let mcpClient: Client;
+  let mockClient: PveClient;
+
+  beforeEach(async () => {
+    mockClient = makeMockClient();
+    const server = createServer();
+    registerAllTools(server, mockClient, makeConfig());
+    const conn = await connectTestClient(server);
+    mcpClient = conn.client;
+    cleanup = conn.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("pve_run_backup passes the new options", async () => {
+    await mcpClient.callTool({
+      name: "pve_run_backup",
+      arguments: {
+        node: "pve",
+        vmid: "100",
+        "notes-template": "{{guestname}}",
+        protected: true,
+        fleecing: "enabled=1,storage=local-lvm",
+        "pbs-change-detection-mode": "metadata",
+        "notification-mode": "notification-system",
+        bwlimit: 1000,
+        ionice: 7,
+        lockwait: 5,
+        stopwait: 10,
+      },
+    });
+    expect(mockClient.post).toHaveBeenCalledWith("/nodes/pve/vzdump", {
+      vmid: "100",
+      "notes-template": "{{guestname}}",
+      protected: 1,
+      fleecing: "enabled=1,storage=local-lvm",
+      "pbs-change-detection-mode": "metadata",
+      "notification-mode": "notification-system",
+      bwlimit: 1000,
+      ionice: 7,
+      lockwait: 5,
+      stopwait: 10,
+    });
+  });
+
+  it("pve_create_backup_job passes retention, comment and exclude", async () => {
+    await mcpClient.callTool({
+      name: "pve_create_backup_job",
+      arguments: {
+        id: "nightly",
+        comment: "nightly",
+        schedule: "02:00",
+        all: true,
+        exclude: "100,101",
+        "prune-backups": "keep-last=3,keep-weekly=2",
+        remove: true,
+        "repeat-missed": true,
+        protected: false,
+      },
+    });
+    expect(mockClient.post).toHaveBeenCalledWith("/cluster/backup", {
+      schedule: "02:00",
+      id: "nightly",
+      comment: "nightly",
+      exclude: "100,101",
+      "prune-backups": "keep-last=3,keep-weekly=2",
+      all: 1,
+      remove: 1,
+      "repeat-missed": 1,
+      protected: 0,
+    });
+  });
+
+  it("pve_create_backup_job rejects bad retention and exclude", async () => {
+    for (const extra of [
+      { "prune-backups": "keep-last=0" },
+      { "prune-backups": "keep-last=3;rm" },
+      { exclude: "100, 101" },
+    ]) {
+      const result = await mcpClient.callTool({
+        name: "pve_create_backup_job",
+        arguments: { schedule: "02:00", ...extra },
+      });
+      expect(result.isError).toBe(true);
+    }
+    expect(mockClient.post).not.toHaveBeenCalled();
+  });
+
+  it("pve_run_backup has no host-level or deleting options", async () => {
+    const { tools } = await mcpClient.listTools();
+    const run = tools.find((t) => t.name === "pve_run_backup");
+    const props = Object.keys(run?.inputSchema.properties ?? {});
+    for (const key of [
+      "script",
+      "dumpdir",
+      "tmpdir",
+      "stdout",
+      "prune-backups",
+      "remove",
+    ]) {
+      expect(props).not.toContain(key);
+    }
+  });
+});

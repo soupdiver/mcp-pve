@@ -6,7 +6,47 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PveClient } from "../core/client.js";
 import { registerTool } from "../core/tools.js";
+import { pruneBackupsSchema } from "../core/validators.js";
 import type { AppConfig } from "../types/index.js";
+
+/** Options for both the run and the job tool. */
+const backupCommonShape = {
+  "notes-template": z
+    .string()
+    .optional()
+    .describe("Backup notes (e.g. {{guestname}})"),
+  protected: z.boolean().optional().describe("Mark the backups as protected"),
+  fleecing: z
+    .string()
+    .optional()
+    .describe("Fleecing options, VMs only (e.g. enabled=1,storage=local-lvm)"),
+  "pbs-change-detection-mode": z
+    .enum(["legacy", "data", "metadata"])
+    .optional()
+    .describe("PBS change detection, containers only"),
+  "notification-mode": z
+    .enum(["auto", "legacy-sendmail", "notification-system"])
+    .optional()
+    .describe("Notification system"),
+  bwlimit: z.number().optional().describe("I/O limit in KiB/s"),
+  ionice: z.number().optional().describe("I/O priority"),
+  lockwait: z.number().optional().describe("Minutes to wait for the lock"),
+  stopwait: z
+    .number()
+    .optional()
+    .describe("Minutes to wait for a guest to stop"),
+};
+
+function applyBackupCommon(
+  body: Record<string, unknown>,
+  args: Record<string, unknown>,
+): void {
+  for (const key of Object.keys(backupCommonShape)) {
+    const v = args[key];
+    if (v === undefined) continue;
+    body[key] = typeof v === "boolean" ? (v ? 1 : 0) : v;
+  }
+}
 
 export function registerBackupTools(
   server: McpServer,
@@ -89,6 +129,7 @@ export function registerBackupTools(
         .string()
         .optional()
         .describe("Email address for backup notifications"),
+      ...backupCommonShape,
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {};
@@ -99,6 +140,7 @@ export function registerBackupTools(
       if (args.mailnotification !== undefined)
         body.mailnotification = args.mailnotification;
       if (args.mailto !== undefined) body.mailto = args.mailto;
+      applyBackupCommon(body, args);
       const data = await client.post(`/nodes/${args.node}/vzdump`, body);
       return `Backup initiated on node ${args.node}. Task: ${data}`;
     },
@@ -153,6 +195,23 @@ export function registerBackupTools(
         .number()
         .optional()
         .describe("Maximum number of backup files per VM (0 = unlimited)"),
+      id: z.string().optional().describe("Job ID"),
+      comment: z.string().optional().describe("Job comment"),
+      all: z.boolean().optional().describe("Back up all guests"),
+      exclude: z
+        .string()
+        .refine((v) => /^\d+(,\d+)*$/.test(v), {
+          message: "Expected VMIDs like 100,101",
+        })
+        .optional()
+        .describe("VMIDs to skip, comma-separated"),
+      "prune-backups": pruneBackupsSchema("Retention"),
+      remove: z.boolean().optional().describe("Prune old backups"),
+      "repeat-missed": z
+        .boolean()
+        .optional()
+        .describe("Run a missed job later"),
+      ...backupCommonShape,
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {};
@@ -168,6 +227,16 @@ export function registerBackupTools(
       if (args.node !== undefined) body.node = args.node;
       if (args.pool !== undefined) body.pool = args.pool;
       if (args.maxfiles !== undefined) body.maxfiles = args.maxfiles;
+      if (args.id !== undefined) body.id = args.id;
+      if (args.comment !== undefined) body.comment = args.comment;
+      if (args.exclude !== undefined) body.exclude = args.exclude;
+      if (args["prune-backups"] !== undefined)
+        body["prune-backups"] = args["prune-backups"];
+      if (args.all !== undefined) body.all = args.all ? 1 : 0;
+      if (args.remove !== undefined) body.remove = args.remove ? 1 : 0;
+      if (args["repeat-missed"] !== undefined)
+        body["repeat-missed"] = args["repeat-missed"] ? 1 : 0;
+      applyBackupCommon(body, args);
       await client.post("/cluster/backup", body);
       return "Backup job created successfully.";
     },
