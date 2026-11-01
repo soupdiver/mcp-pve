@@ -445,6 +445,12 @@ export function registerQemuTools(
         .describe("Description for the cloned VM"),
       snapname: z.string().optional().describe("Snapshot name to clone from"),
       storage: z.string().optional().describe("Target storage for full clone"),
+      pool: z.string().optional().describe("Resource pool for the clone"),
+      bwlimit: z.number().optional().describe("I/O limit in KiB/s"),
+      format: z
+        .enum(["raw", "qcow2", "vmdk"])
+        .optional()
+        .describe("Disk format (full clone only)"),
     },
     handler: async (args) => {
       const body: Record<string, unknown> = { newid: args.newid };
@@ -454,6 +460,9 @@ export function registerQemuTools(
       if (args.description !== undefined) body.description = args.description;
       if (args.snapname !== undefined) body.snapname = args.snapname;
       if (args.storage !== undefined) body.storage = args.storage;
+      if (args.pool !== undefined) body.pool = args.pool;
+      if (args.bwlimit !== undefined) body.bwlimit = args.bwlimit;
+      if (args.format !== undefined) body.format = args.format;
       const data = await client.post(
         `/nodes/${args.node}/qemu/${args.vmid}/clone`,
         body,
@@ -513,10 +522,17 @@ export function registerQemuTools(
       node: z.string().describe("The node name"),
       vmid: z.number().describe("The VM ID"),
       snapname: z.string().describe("Name of the snapshot to delete"),
+      force: z
+        .boolean()
+        .optional()
+        .describe(
+          "Remove from the config even if removing the disk snapshots fails",
+        ),
     },
     handler: async (args) => {
+      const force = args.force ? "?force=1" : "";
       const data = await client.delete(
-        `/nodes/${args.node}/qemu/${args.vmid}/snapshot/${args.snapname}`,
+        `/nodes/${args.node}/qemu/${args.vmid}/snapshot/${args.snapname}${force}`,
       );
       return `Snapshot '${args.snapname}' deletion initiated for VM ${args.vmid}. Task: ${data}`;
     },
@@ -537,10 +553,14 @@ export function registerQemuTools(
       node: z.string().describe("The node name"),
       vmid: z.number().describe("The VM ID"),
       snapname: z.string().describe("Name of the snapshot to rollback to"),
+      start: z.boolean().optional().describe("Start after the rollback"),
     },
     handler: async (args) => {
+      const body: Record<string, unknown> = {};
+      if (args.start !== undefined) body.start = args.start ? 1 : 0;
       const data = await client.post(
         `/nodes/${args.node}/qemu/${args.vmid}/snapshot/${args.snapname}/rollback`,
+        body,
       );
       return `Rollback to snapshot '${args.snapname}' initiated for VM ${args.vmid}. Task: ${data}`;
     },

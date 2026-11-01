@@ -1282,3 +1282,108 @@ describe("handler: LXC options and devices", () => {
     }
   });
 });
+
+describe("handler: clone and snapshot options", () => {
+  let cleanup: () => Promise<void>;
+  let mcpClient: Client;
+  let mockClient: PveClient;
+
+  beforeEach(async () => {
+    mockClient = makeMockClient();
+    const server = createServer();
+    registerAllTools(server, mockClient, makeConfig());
+    const conn = await connectTestClient(server);
+    mcpClient = conn.client;
+    cleanup = conn.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("pve_clone_qemu_vm passes pool, bwlimit and format", async () => {
+    await mcpClient.callTool({
+      name: "pve_clone_qemu_vm",
+      arguments: {
+        node: "pve",
+        vmid: 9000,
+        newid: 101,
+        full: true,
+        storage: "local-lvm",
+        format: "qcow2",
+        pool: "prod",
+        bwlimit: 51200,
+      },
+    });
+    expect(mockClient.post).toHaveBeenCalledWith("/nodes/pve/qemu/9000/clone", {
+      newid: 101,
+      full: 1,
+      storage: "local-lvm",
+      pool: "prod",
+      bwlimit: 51200,
+      format: "qcow2",
+    });
+  });
+
+  it("pve_clone_lxc_container passes pool and bwlimit", async () => {
+    await mcpClient.callTool({
+      name: "pve_clone_lxc_container",
+      arguments: {
+        node: "pve",
+        vmid: 200,
+        newid: 201,
+        pool: "p",
+        bwlimit: 1000,
+      },
+    });
+    expect(mockClient.post).toHaveBeenCalledWith("/nodes/pve/lxc/200/clone", {
+      newid: 201,
+      pool: "p",
+      bwlimit: 1000,
+    });
+  });
+
+  it("pve_clone_qemu_vm rejects an unknown format", async () => {
+    const result = await mcpClient.callTool({
+      name: "pve_clone_qemu_vm",
+      arguments: { node: "pve", vmid: 1, newid: 2, format: "vdi" },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  it("snapshot delete adds force only when set", async () => {
+    await mcpClient.callTool({
+      name: "pve_delete_qemu_snapshot",
+      arguments: { node: "pve", vmid: 100, snapname: "s1" },
+    });
+    expect(mockClient.delete).toHaveBeenLastCalledWith(
+      "/nodes/pve/qemu/100/snapshot/s1",
+    );
+    await mcpClient.callTool({
+      name: "pve_delete_lxc_snapshot",
+      arguments: { node: "pve", vmid: 200, snapname: "s1", force: true },
+    });
+    expect(mockClient.delete).toHaveBeenLastCalledWith(
+      "/nodes/pve/lxc/200/snapshot/s1?force=1",
+    );
+  });
+
+  it("snapshot rollback sends start only when set", async () => {
+    await mcpClient.callTool({
+      name: "pve_rollback_qemu_snapshot",
+      arguments: { node: "pve", vmid: 100, snapname: "s1" },
+    });
+    expect(mockClient.post).toHaveBeenLastCalledWith(
+      "/nodes/pve/qemu/100/snapshot/s1/rollback",
+      {},
+    );
+    await mcpClient.callTool({
+      name: "pve_rollback_lxc_snapshot",
+      arguments: { node: "pve", vmid: 200, snapname: "s1", start: true },
+    });
+    expect(mockClient.post).toHaveBeenLastCalledWith(
+      "/nodes/pve/lxc/200/snapshot/s1/rollback",
+      { start: 1 },
+    );
+  });
+});
