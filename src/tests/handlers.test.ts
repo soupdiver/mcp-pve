@@ -1585,3 +1585,44 @@ describe("handler: task filters, VM list and pool move", () => {
     });
   });
 });
+
+describe("handler: pve_migrate_qemu_vm options", () => {
+  it("passes storage and limit options in read-execute mode", async () => {
+    const mockClient = makeMockClient();
+    const server = createServer();
+    registerAllTools(
+      server,
+      mockClient,
+      makeConfig({ accessTier: "read-execute" }),
+    );
+    const { client: mcpClient, cleanup } = await connectTestClient(server);
+
+    const result = await mcpClient.callTool({
+      name: "pve_migrate_qemu_vm",
+      arguments: {
+        node: "pve",
+        vmid: 100,
+        target: "pve2",
+        online: true,
+        "with-local-disks": true,
+        targetstorage: "local-lvm",
+        "with-conntrack-state": false,
+        bwlimit: 51200,
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(mockClient.post).toHaveBeenCalledWith(
+      "/nodes/pve/qemu/100/migrate",
+      {
+        target: "pve2",
+        online: 1,
+        "with-local-disks": 1,
+        "with-conntrack-state": 0,
+        targetstorage: "local-lvm",
+        bwlimit: 51200,
+      },
+    );
+    await cleanup();
+  });
+});

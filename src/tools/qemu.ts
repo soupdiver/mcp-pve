@@ -222,10 +222,29 @@ export function registerQemuTools(
         .boolean()
         .optional()
         .describe("Perform an online (live) migration (default: false)"),
+      "with-local-disks": z
+        .boolean()
+        .optional()
+        .describe("Migrate local disks too"),
+      targetstorage: z
+        .string()
+        .optional()
+        .describe("Target storage (e.g. local-lvm, or src:dst,src2:dst2)"),
+      "with-conntrack-state": z
+        .boolean()
+        .optional()
+        .describe("Migrate conntrack entries"),
+      bwlimit: z.number().optional().describe("I/O limit in KiB/s"),
     },
     handler: async (args) => {
       const body: Record<string, unknown> = { target: args.target };
       if (args.online !== undefined) body.online = args.online ? 1 : 0;
+      for (const key of ["with-local-disks", "with-conntrack-state"]) {
+        if (args[key] !== undefined) body[key] = args[key] ? 1 : 0;
+      }
+      if (args.targetstorage !== undefined)
+        body.targetstorage = args.targetstorage;
+      if (args.bwlimit !== undefined) body.bwlimit = args.bwlimit;
       const data = await client.post(
         `/nodes/${args.node}/qemu/${args.vmid}/migrate`,
         body,
