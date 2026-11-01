@@ -6,7 +6,39 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PveClient } from "../core/client.js";
 import { registerTool } from "../core/tools.js";
+import { optionListSchema } from "../core/validators.js";
 import type { AppConfig } from "../types/index.js";
+
+const networkExtraShape = {
+  mtu: z.number().optional().describe("MTU (e.g. 9000)"),
+  bridge_vids: z
+    .string()
+    .optional()
+    .describe("Allowed VLANs on the bridge (e.g. 2 4 100-200)"),
+  cidr: z.string().optional().describe("IPv4 address with prefix"),
+  address6: z.string().optional().describe("IPv6 address"),
+  netmask6: z.number().optional().describe("IPv6 prefix length"),
+  cidr6: z.string().optional().describe("IPv6 address with prefix"),
+  gateway6: z.string().optional().describe("IPv6 gateway"),
+  comments6: z.string().optional().describe("Comments for the IPv6 address"),
+  "vlan-id": z
+    .number()
+    .optional()
+    .describe("VLAN ID of a named VLAN interface"),
+  "vlan-raw-device": z
+    .string()
+    .optional()
+    .describe("Parent interface of a VLAN interface"),
+};
+
+function applyNetworkExtras(
+  body: Record<string, unknown>,
+  args: Record<string, unknown>,
+): void {
+  for (const key of Object.keys(networkExtraShape)) {
+    if (args[key] !== undefined) body[key] = args[key];
+  }
+}
 
 export function registerNetworkTools(
   server: McpServer,
@@ -122,6 +154,7 @@ export function registerNetworkTools(
         .optional()
         .describe("Automatically start interface on boot"),
       comments: z.string().optional().describe("Comments for the interface"),
+      ...networkExtraShape,
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {
@@ -137,6 +170,7 @@ export function registerNetworkTools(
         body.bridge_vlan_aware = args.bridge_vlan_aware ? 1 : 0;
       if (args.autostart !== undefined) body.autostart = args.autostart ? 1 : 0;
       if (args.comments !== undefined) body.comments = args.comments;
+      applyNetworkExtras(body, args);
       await client.post(`/nodes/${args.node}/network`, body);
       return `Network interface '${args.iface}' created on node ${args.node}. Apply changes with a node network reload.`;
     },
@@ -182,6 +216,8 @@ export function registerNetworkTools(
         .optional()
         .describe("Automatically start interface on boot"),
       comments: z.string().optional().describe("Comments for the interface"),
+      ...networkExtraShape,
+      delete: optionListSchema("Settings to remove", "gateway,mtu"),
     },
     handler: async (args) => {
       const body: Record<string, unknown> = { type: args.type };
@@ -194,6 +230,8 @@ export function registerNetworkTools(
         body.bridge_vlan_aware = args.bridge_vlan_aware ? 1 : 0;
       if (args.autostart !== undefined) body.autostart = args.autostart ? 1 : 0;
       if (args.comments !== undefined) body.comments = args.comments;
+      applyNetworkExtras(body, args);
+      if (args.delete !== undefined) body.delete = args.delete;
       await client.put(`/nodes/${args.node}/network/${args.iface}`, body);
       return `Network interface '${args.iface}' updated on node ${args.node}. Apply changes with a node network reload.`;
     },

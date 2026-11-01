@@ -6,6 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PveClient } from "../core/client.js";
 import { registerTool } from "../core/tools.js";
+import { optionListSchema, pruneBackupsSchema } from "../core/validators.js";
 import type { AppConfig } from "../types/index.js";
 
 interface ContentItem {
@@ -53,6 +54,39 @@ function summarizeGroup(group: ContentItem[]): Record<string, unknown> {
     newest_ctime: Math.max(...ctimes),
     latest_volid: latest.volid,
   };
+}
+
+/** Options for both create and update. */
+const storageCommonShape = {
+  "prune-backups": pruneBackupsSchema("Backup retention"),
+  "max-protected-backups": z
+    .number()
+    .optional()
+    .describe("Max protected backups per guest (-1 = unlimited)"),
+  sparse: z.boolean().optional().describe("Use sparse volumes"),
+  format: z
+    .enum(["raw", "qcow2", "subvol", "vmdk"])
+    .optional()
+    .describe("Default image format"),
+  preallocation: z
+    .enum(["off", "metadata", "falloc", "full"])
+    .optional()
+    .describe("Preallocation for raw and qcow2 images"),
+  fingerprint: z
+    .string()
+    .optional()
+    .describe("Server certificate SHA-256 fingerprint"),
+};
+
+function applyStorageCommon(
+  body: Record<string, unknown>,
+  args: Record<string, unknown>,
+): void {
+  for (const key of Object.keys(storageCommonShape)) {
+    const v = args[key];
+    if (v === undefined) continue;
+    body[key] = typeof v === "boolean" ? (v ? 1 : 0) : v;
+  }
 }
 
 export function registerStorageTools(
@@ -298,6 +332,23 @@ export function registerStorageTools(
         .boolean()
         .optional()
         .describe("Whether the storage is shared across nodes"),
+      disable: z.boolean().optional().describe("Create the storage disabled"),
+      thinpool: z.string().optional().describe("LVM thin pool name"),
+      datastore: z.string().optional().describe("PBS datastore name"),
+      namespace: z.string().optional().describe("PBS namespace"),
+      username: z.string().optional().describe("User (e.g. backup@pbs)"),
+      password: z
+        .string()
+        .optional()
+        .describe("Password for the share or datastore"),
+      share: z.string().optional().describe("CIFS share"),
+      domain: z.string().optional().describe("CIFS domain"),
+      smbversion: z
+        .enum(["default", "2.0", "2.1", "3", "3.0", "3.11"])
+        .optional()
+        .describe("SMB version"),
+      subdir: z.string().optional().describe("Subdirectory to mount"),
+      ...storageCommonShape,
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {
@@ -312,6 +363,21 @@ export function registerStorageTools(
       if (args.pool !== undefined) body.pool = args.pool;
       if (args.nodes !== undefined) body.nodes = args.nodes;
       if (args.shared !== undefined) body.shared = args.shared ? 1 : 0;
+      if (args.disable !== undefined) body.disable = args.disable ? 1 : 0;
+      for (const key of [
+        "thinpool",
+        "datastore",
+        "namespace",
+        "username",
+        "password",
+        "share",
+        "domain",
+        "smbversion",
+        "subdir",
+      ]) {
+        if (args[key] !== undefined) body[key] = args[key];
+      }
+      applyStorageCommon(body, args);
       await client.post("/storage", body);
       return `Storage '${args.storage}' (type: ${args.type}) created successfully.`;
     },
@@ -343,6 +409,8 @@ export function registerStorageTools(
         .optional()
         .describe("Whether the storage is shared across nodes"),
       disable: z.boolean().optional().describe("Disable the storage"),
+      ...storageCommonShape,
+      delete: optionListSchema("Settings to remove", "nodes"),
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {};
@@ -350,6 +418,8 @@ export function registerStorageTools(
       if (args.nodes !== undefined) body.nodes = args.nodes;
       if (args.shared !== undefined) body.shared = args.shared ? 1 : 0;
       if (args.disable !== undefined) body.disable = args.disable ? 1 : 0;
+      applyStorageCommon(body, args);
+      if (args.delete !== undefined) body.delete = args.delete;
       await client.put(`/storage/${args.storage}`, body);
       return `Storage '${args.storage}' updated successfully.`;
     },

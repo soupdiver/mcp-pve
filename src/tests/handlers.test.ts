@@ -1626,3 +1626,136 @@ describe("handler: pve_migrate_qemu_vm options", () => {
     await cleanup();
   });
 });
+
+describe("handler: network and storage options", () => {
+  let cleanup: () => Promise<void>;
+  let mcpClient: Client;
+  let mockClient: PveClient;
+
+  beforeEach(async () => {
+    mockClient = makeMockClient();
+    const server = createServer();
+    registerAllTools(server, mockClient, makeConfig());
+    const conn = await connectTestClient(server);
+    mcpClient = conn.client;
+    cleanup = conn.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("pve_create_network passes mtu, VLAN and IPv6 options", async () => {
+    await mcpClient.callTool({
+      name: "pve_create_network",
+      arguments: {
+        node: "pve",
+        iface: "vmbr1",
+        type: "bridge",
+        bridge_vlan_aware: true,
+        bridge_vids: "2-4094",
+        mtu: 9000,
+        cidr6: "fd00::1/64",
+        gateway6: "fd00::ff",
+        "vlan-id": 10,
+        "vlan-raw-device": "eno1",
+      },
+    });
+    expect(mockClient.post).toHaveBeenCalledWith("/nodes/pve/network", {
+      iface: "vmbr1",
+      type: "bridge",
+      bridge_vlan_aware: 1,
+      bridge_vids: "2-4094",
+      mtu: 9000,
+      cidr6: "fd00::1/64",
+      gateway6: "fd00::ff",
+      "vlan-id": 10,
+      "vlan-raw-device": "eno1",
+    });
+  });
+
+  it("pve_update_network passes delete and rejects a bad list", async () => {
+    await mcpClient.callTool({
+      name: "pve_update_network",
+      arguments: {
+        node: "pve",
+        iface: "vmbr1",
+        type: "bridge",
+        mtu: 1500,
+        delete: "gateway,comments",
+      },
+    });
+    expect(mockClient.put).toHaveBeenCalledWith("/nodes/pve/network/vmbr1", {
+      type: "bridge",
+      mtu: 1500,
+      delete: "gateway,comments",
+    });
+    const bad = await mcpClient.callTool({
+      name: "pve_update_network",
+      arguments: { node: "pve", iface: "vmbr1", type: "bridge", delete: "a;b" },
+    });
+    expect(bad.isError).toBe(true);
+  });
+
+  it("pve_create_storage passes PBS, retention and format options", async () => {
+    await mcpClient.callTool({
+      name: "pve_create_storage",
+      arguments: {
+        storage: "pbs",
+        type: "pbs",
+        server: "pbs.lan",
+        datastore: "main",
+        namespace: "prod",
+        username: "backup@pbs",
+        fingerprint: "AA:BB",
+        "prune-backups": "keep-last=3,keep-weekly=2",
+        "max-protected-backups": 5,
+        sparse: true,
+        format: "qcow2",
+        preallocation: "metadata",
+        disable: false,
+      },
+    });
+    expect(mockClient.post).toHaveBeenCalledWith("/storage", {
+      storage: "pbs",
+      type: "pbs",
+      server: "pbs.lan",
+      disable: 0,
+      datastore: "main",
+      namespace: "prod",
+      username: "backup@pbs",
+      "prune-backups": "keep-last=3,keep-weekly=2",
+      "max-protected-backups": 5,
+      sparse: 1,
+      format: "qcow2",
+      preallocation: "metadata",
+      fingerprint: "AA:BB",
+    });
+  });
+
+  it("pve_update_storage passes retention and delete, rejects bad values", async () => {
+    await mcpClient.callTool({
+      name: "pve_update_storage",
+      arguments: {
+        storage: "pbs",
+        "prune-backups": "keep-all=1",
+        delete: "nodes",
+      },
+    });
+    expect(mockClient.put).toHaveBeenCalledWith("/storage/pbs", {
+      "prune-backups": "keep-all=1",
+      delete: "nodes",
+    });
+    for (const extra of [
+      { "prune-backups": "keep-last=0" },
+      { format: "vdi" },
+      { delete: "nodes, content" },
+    ]) {
+      const bad = await mcpClient.callTool({
+        name: "pve_update_storage",
+        arguments: { storage: "pbs", ...extra },
+      });
+      expect(bad.isError).toBe(true);
+    }
+  });
+});
