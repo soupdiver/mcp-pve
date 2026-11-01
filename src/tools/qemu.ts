@@ -6,6 +6,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PveClient } from "../core/client.js";
 import { applyDevices, devicesSchema } from "../core/qemu-config.js";
+import {
+  applyQemuOptions,
+  qemuBootSchema,
+  qemuCpuSchema,
+  qemuOptionsShape,
+  qemuUpdateShape,
+} from "../core/qemu-options.js";
 import { getRrdData, rrdDescription, rrdInputSchema } from "../core/rrd.js";
 import { registerTool } from "../core/tools.js";
 import type { AppConfig } from "../types/index.js";
@@ -278,6 +285,9 @@ export function registerQemuTools(
         .optional()
         .describe("Guest agent (e.g. 1 or enabled=1,fstrim_cloned_disks=1)"),
       devices: devicesSchema,
+      pool: z.string().optional().describe("Resource pool"),
+      cpu: qemuCpuSchema,
+      ...qemuOptionsShape,
     },
     handler: async (args) => {
       const body: Record<string, unknown> = { vmid: args.vmid };
@@ -294,6 +304,9 @@ export function registerQemuTools(
       if (args.start !== undefined) body.start = args.start ? 1 : 0;
       if (args.agent !== undefined) body.agent = args.agent;
       applyDevices(body, args.devices);
+      if (args.pool !== undefined) body.pool = args.pool;
+      if (args.cpu !== undefined) body.cpu = args.cpu;
+      applyQemuOptions(body, args);
       const data = await client.post(`/nodes/${args.node}/qemu`, body);
       return `VM ${args.vmid} creation initiated on node ${args.node}. Task: ${data}`;
     },
@@ -370,6 +383,9 @@ export function registerQemuTools(
         .optional()
         .describe("Guest agent (e.g. 1 or enabled=1,fstrim_cloned_disks=1)"),
       devices: devicesSchema,
+      boot: qemuBootSchema,
+      ...qemuOptionsShape,
+      ...qemuUpdateShape,
     },
     handler: async (args) => {
       const body: Record<string, unknown> = {};
@@ -384,6 +400,16 @@ export function registerQemuTools(
       if (args.scsi0 !== undefined) body.scsi0 = args.scsi0;
       if (args.agent !== undefined) body.agent = args.agent;
       applyDevices(body, args.devices);
+      if (args.boot !== undefined) body.boot = args.boot;
+      applyQemuOptions(body, args);
+      if (args.delete !== undefined) {
+        if (String(args.delete).split(",").includes("lock")) {
+          throw new Error("Deleting lock is not allowed");
+        }
+        body.delete = args.delete;
+      }
+      if (args.revert !== undefined) body.revert = args.revert;
+      if (args.digest !== undefined) body.digest = args.digest;
       await client.put(`/nodes/${args.node}/qemu/${args.vmid}/config`, body);
       return `VM ${args.vmid} configuration updated on node ${args.node}.`;
     },

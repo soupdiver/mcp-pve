@@ -1010,3 +1010,151 @@ describe("handler: QEMU agent and devices", () => {
     expect(mockClient.put).not.toHaveBeenCalled();
   });
 });
+
+describe("handler: QEMU VM options", () => {
+  let cleanup: () => Promise<void>;
+  let mcpClient: Client;
+  let mockClient: PveClient;
+
+  beforeEach(async () => {
+    mockClient = makeMockClient();
+    const server = createServer();
+    registerAllTools(server, mockClient, makeConfig());
+    const conn = await connectTestClient(server);
+    mcpClient = conn.client;
+    cleanup = conn.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  it("pve_create_qemu_vm passes cpu, pool and the new options", async () => {
+    vi.mocked(mockClient.post).mockResolvedValueOnce("UPID:pve:0004");
+
+    const result = await mcpClient.callTool({
+      name: "pve_create_qemu_vm",
+      arguments: {
+        node: "pve",
+        vmid: 301,
+        cpu: "host",
+        bios: "ovmf",
+        machine: "q35",
+        efidisk0: "local-lvm:1,efitype=4m,pre-enrolled-keys=1",
+        tpmstate0: "local-lvm:1,version=v2.0",
+        pool: "prod",
+        tags: "prod;web",
+        vga: "std",
+        serial0: "socket",
+        startup: "order=1,up=30",
+        numa: true,
+        balloon: 0,
+        hotplug: "disk,network",
+        protection: false,
+        boot: "order=scsi0;net0",
+        ciuser: "ops",
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(mockClient.post).toHaveBeenCalledWith("/nodes/pve/qemu", {
+      vmid: 301,
+      boot: "order=scsi0;net0",
+      pool: "prod",
+      cpu: "host",
+      bios: "ovmf",
+      machine: "q35",
+      efidisk0: "local-lvm:1,efitype=4m,pre-enrolled-keys=1",
+      tpmstate0: "local-lvm:1,version=v2.0",
+      tags: "prod;web",
+      vga: "std",
+      serial0: "socket",
+      startup: "order=1,up=30",
+      hotplug: "disk,network",
+      ciuser: "ops",
+      numa: 1,
+      protection: 0,
+      balloon: 0,
+    });
+  });
+
+  it("pve_update_qemu_config passes boot, delete, revert and digest", async () => {
+    const result = await mcpClient.callTool({
+      name: "pve_update_qemu_config",
+      arguments: {
+        node: "pve",
+        vmid: 100,
+        boot: "order=scsi0",
+        tags: "db",
+        protection: true,
+        delete: "scsi2,net1",
+        revert: "memory",
+        digest: "ABCDEF0123",
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(mockClient.put).toHaveBeenCalledWith("/nodes/pve/qemu/100/config", {
+      boot: "order=scsi0",
+      tags: "db",
+      protection: 1,
+      delete: "scsi2,net1",
+      revert: "memory",
+      digest: "ABCDEF0123",
+    });
+  });
+
+  it("rejects bad lists, lock, digest, bios and serial0", async () => {
+    const bad = [
+      { delete: "lock" },
+      { delete: "tags,lock" },
+      { delete: "tags; rm -rf" },
+      { revert: "a b" },
+      { digest: "not-hex!" },
+      { bios: "uefi" },
+      { serial0: "/dev/ttyS0" },
+    ];
+    for (const extra of bad) {
+      const result = await mcpClient.callTool({
+        name: "pve_update_qemu_config",
+        arguments: { node: "pve", vmid: 100, ...extra },
+      });
+      expect(result.isError).toBe(true);
+    }
+    expect(mockClient.put).not.toHaveBeenCalled();
+  });
+
+  it("URL-encodes sshkeys", async () => {
+    const result = await mcpClient.callTool({
+      name: "pve_update_qemu_config",
+      arguments: {
+        node: "pve",
+        vmid: 100,
+        sshkeys: "ssh-ed25519 AAAA a@b\nssh-rsa BBBB c@d",
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(mockClient.put).toHaveBeenCalledWith("/nodes/pve/qemu/100/config", {
+      sshkeys: "ssh-ed25519%20AAAA%20a%40b%0Assh-rsa%20BBBB%20c%40d",
+    });
+  });
+
+  it("has no host-level options in the schema", async () => {
+    const { tools } = await mcpClient.listTools();
+    for (const name of ["pve_create_qemu_vm", "pve_update_qemu_config"]) {
+      const props = Object.keys(
+        tools.find((t) => t.name === name)?.inputSchema.properties ?? {},
+      );
+      for (const key of [
+        "args",
+        "hookscript",
+        "cicustom",
+        "hostpci0",
+        "lock",
+      ]) {
+        expect(props).not.toContain(key);
+      }
+    }
+  });
+});
